@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-20
 **Status:** Approved (brainstorming phase complete, awaiting implementation plan)
-**Authors:** Aleksandar Cakic (acakic92@gmail.com)
+**Authors:** Aleksandar "Alex" Cakic (alex@career-flow.com)
 **Affected repos:** `career-flow-backend`, `career-flow-frontend`
 **Supersedes:** the v0 prototype at github.com/AleksandarCakic/v0-coaching-website
 
@@ -10,10 +10,11 @@
 
 ## 1. Summary
 
-Career Flow is a small, two-coach career coaching practice (Aleksandar Cakic and a partner) selling 1-on-1 monthly coaching subscriptions ($1,200–$2,100/mo tiers) and one-time group cohorts ($800). The current site is a v0-generated Next.js prototype with no backend, hardcoded pricing, and a single Calendly link.
+Career Flow is a small, two-coach career coaching practice (Aleksandar "Alex" Cakic and Atiyeh) selling 1-on-1 monthly coaching subscriptions ($1,200–$2,100/mo tiers) and one-time group cohorts ($800). The current site is a v0-generated Next.js prototype with no backend, hardcoded pricing, and a single Calendly link.
 
 This spec defines the rewrite into a production architecture:
 
+- **Identity:** Two coaches — Alex (`alex@career-flow.com`) and Atiyeh (`atiyeh@career-flow.com`); shared `hello@career-flow.com` group alias.
 - **`career-flow-backend`** — Python 3.12 + FastAPI + PostgreSQL, deployed to Railway.
 - **`career-flow-frontend`** — Next.js 16 + React 19 + TypeScript (strict), deployed to Railway.
 - Coach-generated Stripe payment links (no public buy-now buttons), Calendly for scheduling, Resend for transactional email, Slack for internal alerts, PostHog for analytics, Clerk for admin auth, Sentry for errors.
@@ -44,7 +45,7 @@ v0 will be used as visual reference only; both repos are fresh rewrites with pra
 ### In MVP
 
 - **Marketing site rewrite** with warm/minimal-premium visual direction. Pages: Home, How We Help (+ 1-on-1, Group sub-pages), Our Team, Coach Detail (`/our-team/[slug]`), Success Stories (DB-backed), Resources (email-gated PDF downloads), FAQ, Contact, Match-Me Quiz, Join Waitlist, Terms, Blog scaffolding (MDX-ready).
-- **Two coach profiles** seeded in DB (Aleks + partner), each with their own Calendly URL.
+- **Two coach profiles** seeded in DB (Alex + Atiyeh), each with their own Calendly URL.
 - **Four packages** seeded: Navigator ($1,200/mo), Architect ($1,600/mo), Accelerator ($2,100/mo), Group Cohort ($800 one-time).
 - **Admin panel** (Clerk-authenticated, 2-email allowlist): view leads, waitlist, quiz responses, bookings, payments, success stories; generate Stripe payment links.
 - **Backend services**: lead capture, waitlist, quiz, resource gating with token-expiry, Stripe Checkout creation + webhook handler, Calendly webhook handler, Resend email sender, Slack alert dispatcher, PostHog server-side events.
@@ -477,8 +478,10 @@ All variants will: drop translucent-black-on-gradient pattern; use tighter typog
 ### Resend
 
 - API key in backend env.
-- Domain `career-flow.com` verified in Resend (SPF, DKIM, DMARC TXT records in DNS).
-- Sender addresses: `noreply@`, `inquiry@`, `onboarding@`.
+- Domain `career-flow.com` verified in Resend (SPF, DKIM, DMARC TXT records in Squarespace DNS).
+- SPF record must combine Resend and Google Workspace senders in one TXT: `v=spf1 include:_spf.resend.com include:_spf.google.com ~all`.
+- Sender addresses (outbound transactional): `noreply@`, `inquiry@`, `onboarding@`.
+- Inbound mail (replies, account verifications) routes through Google Workspace: `alex@`, `atiyeh@`, `hello@career-flow.com`.
 - React Email templates live in `career-flow-frontend/emails/` (TSX components). `pnpm build:emails` renders each to a static `.html` file in `career-flow-frontend/emails/dist/`. A small GitHub Action in the frontend repo opens an automatic PR against `career-flow-backend` that updates `app/emails/*.html` whenever a template TSX file changes on `main`. Backend reads the HTML files and sends via Resend's Python SDK. CI in backend fails if `app/emails/*.html` is missing or stale relative to the latest frontend release tag.
 - Failure → log to Sentry, retry 3× with exponential backoff in a background task. Form submitter not blocked.
 
@@ -527,7 +530,7 @@ One Railway project `career-flow`, three environments (production, staging, prev
 | `staging.career-flow.com`, `api.staging.career-flow.com` | web/api (staging) |
 | `*-pr-N.up.railway.app` | preview |
 
-DNS recommended via Cloudflare (CDN + DDoS). SSL via Railway's Let's Encrypt.
+DNS managed in Squarespace (where `career-flow.com` is registered). Squarespace supports ALIAS records for the apex, CNAME, and TXT — sufficient for everything. SSL via Railway's Let's Encrypt.
 
 ### Branch strategy
 
@@ -629,7 +632,7 @@ Frontend:
 |---|---|
 | **1** | Repo scaffolding. Backend: FastAPI shell, Alembic init, pytest config, Dockerfile, Railway deploy of `/healthz`. Frontend: Next.js init, TS strict, Tailwind v4, shadcn/ui setup, Clerk scaffold, Railway deploy of placeholder. Both repos: GitHub Actions CI, `.env.example`, Sentry integration, Resend domain verified, DNS for `career-flow.com` + `api.career-flow.com`. |
 | **2** | Marketing pages (visual rebuild). Mock 5 brand variants → user picks one → lock design tokens. Home, How We Help (+ sub-pages), Our Team (static placeholder), FAQ, Terms — all SSG. PostHog client + cookie banner. Calendly link CTAs. Lighthouse budgets passing. |
-| **3** | DB + coaches + packages. Migrations for `coaches`, `packages`. Seed Aleks + partner + 4 packages. Dynamic `/our-team/[slug]` wired to API via generated client. Success stories table + page (DB-backed). |
+| **3** | DB + coaches + packages. Migrations for `coaches`, `packages`. Seed Alex + Atiyeh + 4 packages. Dynamic `/our-team/[slug]` wired to API via generated client. Success stories table + page (DB-backed). |
 | **4** | Lead capture. Contact + waitlist + quiz forms wired to backend, replacing v0's Resend server actions. Resend email templates (React Email). Slack `#leads` alerts. PostHog event linking via `posthog_distinct_id`. |
 | **5** | Admin panel basics. Clerk auth + `ADMIN_EMAILS` enforced both sides. Leads/waitlist/quiz/success-stories viewers. Send-payment-link UI (pick package, enter email, click → URL emailed). |
 | **6** | Stripe integration. Stripe products/prices seeded from packages table via setup script. Checkout Session endpoint. Webhook handler with idempotency. Payment log. Slack `#payments` alerts. Customer Portal link in confirmation emails. |
@@ -652,7 +655,8 @@ Frontend:
 | PostHog Cloud | $0 | $0 | Free 1M events/mo |
 | Slack (internal coach workspace) | $0 | — | Free tier |
 | Slack (client community workspace) | $0 | — | Free tier; manual invites in MVP |
-| Cloudflare DNS + CDN | $0 | $0 | Free tier sufficient |
+| Squarespace DNS | $0 | $0 | Bundled with domain registration |
+| Google Workspace (alex@, atiyeh@, hello@) | $12 | — | Business Starter, 2 paid users; hello@ is a free group alias |
 | UptimeRobot | $0 | — | Free 50 monitors |
 | GitHub Actions | $0 | — | Free 2k min/mo |
 | Stripe | per-transaction | per-transaction | 2.9% + $0.30 |

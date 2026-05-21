@@ -2,14 +2,15 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Both repos (`career-flow-backend`, `career-flow-frontend`) scaffolded with working FastAPI + Next.js shells deployed to Railway, GitHub Actions CI green on both, third-party services connected (Sentry, PostHog, Clerk, Resend, Slack, UptimeRobot, Cloudflare DNS), and `api.career-flow.com` + `staging.career-flow.com` responding to healthchecks.
+**Goal:** Both repos (`career-flow-backend`, `career-flow-frontend`) scaffolded with working FastAPI + Next.js shells deployed to Railway, GitHub Actions CI green on both, third-party services connected (Sentry, PostHog, Clerk, Resend, Slack, UptimeRobot, Google Workspace, Squarespace DNS), and `api.career-flow.com` + `staging.career-flow.com` responding to healthchecks.
 
-**Architecture:** Two parallel tracks (backend Python+FastAPI+Postgres, frontend Next.js with TS strict). Both deploy to a single Railway project with three environments (`production`, `staging`, preview-per-PR). DNS via Cloudflare. CI via GitHub Actions runs lint + typecheck + test + build + (on staging/main) deploy.
+**Architecture:** Two parallel tracks (backend Python+FastAPI+Postgres, frontend Next.js with TS strict). Both deploy to a single Railway project with three environments (`production`, `staging`, preview-per-PR). DNS in Squarespace (where `career-flow.com` is registered). Email on Google Workspace (`alex@`, `atiyeh@`, `hello@career-flow.com`). CI via GitHub Actions runs lint + typecheck + test + build + (on staging/main) deploy.
 
 **Tech Stack:**
 - Backend: Python 3.12, FastAPI, SQLAlchemy 2.0 async + asyncpg, Alembic, Pydantic v2, pytest, uv, Ruff, mypy, structlog, sentry-sdk
 - Frontend: Next.js 16 App Router, React 19, TypeScript strict, Tailwind v4, shadcn/ui, TanStack Query v5, pnpm, ESLint, Vitest, Playwright
-- Infra: Railway (3 services × 3 envs), Cloudflare DNS, GitHub Actions
+- Infra: Railway (3 services × 3 envs), Squarespace DNS, GitHub Actions
+- Email: Google Workspace Business Starter (alex@, atiyeh@, hello@career-flow.com)
 - Third-party (just connected this week, deeper use later): Sentry, PostHog (EU), Clerk, Resend, Slack, UptimeRobot
 
 **Spec reference:** `docs/superpowers/specs/2026-05-20-career-flow-split-design.md`
@@ -20,8 +21,12 @@
 
 These can't be automated. Check each off as you complete them. Don't start Phase 1 until all are done.
 
-- [ ] **0.1** Create accounts (if you don't have them): Railway, Cloudflare, Clerk, Resend, Sentry, PostHog (sign up in **EU** region — important), UptimeRobot, Slack.
-- [ ] **0.2** Make sure `career-flow.com` is in Cloudflare DNS. If it's currently with another registrar, transfer it or change nameservers to Cloudflare's.
+- [ ] **0.1a** Sign up for **Google Workspace Business Starter** ($6/user/mo). Add `career-flow.com` as the domain. Verify domain ownership via the TXT record Workspace gives you (add it to Squarespace DNS). Create users `alex@career-flow.com` and `atiyeh@career-flow.com`. Create a group alias `hello@career-flow.com` with both members.
+- [ ] **0.1b** Add Google MX records to Squarespace DNS for `career-flow.com`:
+  - `MX  @  smtp.google.com  priority 1`
+  (Google now uses one MX target; the legacy multi-MX setup is deprecated.)
+- [ ] **0.1c** Create accounts (using `alex@career-flow.com`) on: Clerk, Resend (already have), Sentry, PostHog (sign up in **EU** region — important), UptimeRobot, Slack. Railway already exists.
+- [ ] **0.2** `career-flow.com` lives in Squarespace already. We'll add DNS records there for Resend (SPF/DKIM/DMARC) and Railway (CNAMEs, ALIAS for apex). No registrar transfer needed.
 - [ ] **0.3** Create GitHub repos `career-flow-backend` and `career-flow-frontend` under your GitHub account. Add the existing local repos as remotes and push `main`:
   ```bash
   cd "/Users/caki/Documents/Engineering/Career Flow/career-flow-backend"
@@ -35,7 +40,7 @@ These can't be automated. Check each off as you complete them. Don't start Phase
 - [ ] **0.5** Fix your local git identity (the earlier commits used the auto-derived `caki@Cakis-MacBook-Pro.local`):
   ```bash
   git config --global user.name "Aleksandar Cakic"
-  git config --global user.email "acakic92@gmail.com"
+  git config --global user.email "alex@career-flow.com"
   ```
 - [ ] **0.6** In Resend: add domain `career-flow.com`. Resend will give you SPF, DKIM, and DMARC TXT records — keep that page open, you'll add them in Phase 5.
 - [ ] **0.7** In Clerk: create an application named "Career Flow Admin". Enable **Email + Password** and **Email magic link** sign-in methods. Disable signups (admin-only allowlist). Note the publishable + secret keys for each environment (development, production).
@@ -708,7 +713,7 @@ DATABASE_URL=postgresql+asyncpg://localhost/careerflow_dev
 CORS_ORIGINS=["http://localhost:3000"]
 
 # Admin allowlist (comma-separated emails)
-ADMIN_EMAILS=["acakic92@gmail.com"]
+ADMIN_EMAILS=["alex@career-flow.com","atiyeh@career-flow.com"]
 
 # Clerk
 CLERK_SECRET_KEY=
@@ -2157,7 +2162,7 @@ Service `api` → Variables. Add (paste actual values, not placeholders):
 - `DATABASE_URL=${{Postgres.DATABASE_URL}}` (Railway substitutes from the linked db service — use Railway's variable references syntax)
 - `LOG_LEVEL=INFO`
 - `CORS_ORIGINS=["https://career-flow.com","https://www.career-flow.com"]`
-- `ADMIN_EMAILS=["acakic92@gmail.com","<partner-email>"]`
+- `ADMIN_EMAILS=["alex@career-flow.com","atiyeh@career-flow.com"]`
 - `CLERK_SECRET_KEY=<from Clerk production env>`
 - `CLERK_JWKS_URL=<from Clerk; the .well-known/jwks.json URL>`
 - `STRIPE_SECRET_KEY=<leave empty for Week 1; we set in Week 6>`
@@ -2225,19 +2230,25 @@ For each environment + service, add:
 
 Railway will give you a CNAME target for each (e.g. `web-production-abc123.up.railway.app`).
 
-- [ ] **Step 2: Set DNS records in Cloudflare**
+- [ ] **Step 2: Set DNS records in Squarespace**
 
-In Cloudflare DNS for `career-flow.com`:
-- `CNAME www → <web-production CNAME>`, proxied (orange cloud)
-- `CNAME api → <api-production CNAME>`, proxied
-- `CNAME staging → <web-staging CNAME>`, proxied
-- `CNAME api.staging → <api-staging CNAME>`, proxied
-- For the apex `career-flow.com`: use Cloudflare's CNAME flattening — add `CNAME @ → <web-production CNAME>`, proxied
+In Squarespace → Settings → Domains → `career-flow.com` → DNS for `career-flow.com`:
 
-Also add the Resend records you saved in Phase 0.6:
-- `TXT @ "v=spf1 include:_spf.resend.com ~all"`
-- `TXT resend._domainkey <DKIM value from Resend>`
+Railway:
+- `ALIAS @ → <web-production CNAME from Railway>` (Squarespace's ALIAS type acts as an apex CNAME)
+- `CNAME www → <web-production CNAME>`
+- `CNAME api → <api-production CNAME>`
+- `CNAME staging → <web-staging CNAME>`
+- `CNAME api.staging → <api-staging CNAME>`
+
+Resend (one combined SPF with Google):
+- `TXT @ "v=spf1 include:_spf.resend.com include:_spf.google.com ~all"`
+- `TXT resend._domainkey <DKIM value from Resend dashboard>`
 - `TXT _dmarc "v=DMARC1; p=none; rua=mailto:dmarc@career-flow.com"`
+
+Google Workspace (added earlier in Phase 0.1b but verify they're still in place):
+- `MX @ smtp.google.com priority 1`
+- Google verification `TXT @ "google-site-verification=..."` (one-time, can stay)
 
 - [ ] **Step 3: Wait for SSL provisioning**
 
@@ -2368,5 +2379,5 @@ When all of the above are true, Week 1 is done. Ping me and we'll write Plan 2 (
 - Follow `superpowers:verification-before-completion`: don't check a step off until you've run the command and seen the expected output.
 - Commit frequently. Every task ends with a commit step on purpose.
 - If you hit an unexpected error: don't shortcut it — invoke `superpowers:systematic-debugging` or `diagnose` to root-cause.
-- USER ACTION steps must be done by Aleks; flag them in chat and wait for confirmation before proceeding.
+- USER ACTION steps must be done by Alex; flag them in chat and wait for confirmation before proceeding.
 - If a step's exact code/config no longer matches reality (a library updated and changed its API), invoke `superpowers:source-driven-development` to ground the fix in current official docs rather than guessing.
