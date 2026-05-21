@@ -90,9 +90,7 @@ async def test_waitlist_submission(
 
 
 @pytest.mark.integration
-async def test_quiz_submission(
-    client: AsyncClient, slack_mock: respx.Router
-) -> None:
+async def test_quiz_submission(client: AsyncClient, slack_mock: respx.Router) -> None:
     response = await client.post(
         "/quiz",
         json={

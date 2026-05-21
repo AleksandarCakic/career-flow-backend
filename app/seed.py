@@ -266,9 +266,7 @@ async def upsert_packages() -> None:
 
 async def upsert_success_stories(coaches: dict[str, Coach]) -> None:
     async with AsyncSessionLocal() as db:
-        existing = {
-            s.slug: s for s in (await db.execute(select(SuccessStory))).scalars().all()
-        }
+        existing = {s.slug: s for s in (await db.execute(select(SuccessStory))).scalars().all()}
         now = datetime.now(UTC)
         for entry in SUCCESS_STORIES_SEED:
             coach = coaches.get(entry.coach_slug)

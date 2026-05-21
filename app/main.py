@@ -6,7 +6,14 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 
-from app.api.routes import coaches, health, packages, public, success_stories
+from app.api.routes import (
+    coaches,
+    health,
+    packages,
+    public,
+    resources,
+    success_stories,
+)
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
 
@@ -52,3 +59,4 @@ app.include_router(coaches.router)
 app.include_router(packages.router)
 app.include_router(success_stories.router)
 app.include_router(public.router)
+app.include_router(resources.router)

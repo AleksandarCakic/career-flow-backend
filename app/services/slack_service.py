@@ -34,9 +34,11 @@ class SlackService:
         self._client = client
 
     async def _post(self, url: str, payload: dict[str, Any]) -> None:
-        async with httpx.AsyncClient(timeout=5.0) if self._client is None else _no_close(
-            self._client
-        ) as client:
+        async with (
+            httpx.AsyncClient(timeout=5.0)
+            if self._client is None
+            else _no_close(self._client) as client
+        ):
             response = await client.post(url, json=payload)
             response.raise_for_status()
 

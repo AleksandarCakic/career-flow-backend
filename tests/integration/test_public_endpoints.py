@@ -35,9 +35,7 @@ async def seeded_coach(db_session: AsyncSession) -> Coach:
 
 
 @pytest.mark.integration
-async def test_list_coaches_returns_active(
-    client: AsyncClient, seeded_coach: Coach
-) -> None:
+async def test_list_coaches_returns_active(client: AsyncClient, seeded_coach: Coach) -> None:
     response = await client.get("/coaches")
     assert response.status_code == 200
     payload = response.json()
