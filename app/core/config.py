@@ -1,7 +1,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -17,6 +17,18 @@ class Settings(BaseSettings):
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
 
     database_url: str = Field(default="postgresql+asyncpg://localhost/careerflow_dev")
+
+    @field_validator("database_url")
+    @classmethod
+    def _ensure_asyncpg_driver(cls, v: str) -> str:
+        # Railway/Heroku/etc. expose plain "postgresql://" (or legacy "postgres://"); SQLAlchemy 2.0 async needs the asyncpg driver explicitly.
+        if v.startswith("postgresql+"):
+            return v
+        if v.startswith("postgresql://"):
+            return "postgresql+asyncpg://" + v.removeprefix("postgresql://")
+        if v.startswith("postgres://"):
+            return "postgresql+asyncpg://" + v.removeprefix("postgres://")
+        return v
 
     sentry_dsn: str | None = None
     sentry_traces_sample_rate: float = 0.1
