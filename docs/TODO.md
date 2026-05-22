@@ -42,10 +42,6 @@ Mirror of this file lives in the frontend repo. Keep both in sync.
 - Add as a `coaches.expertise` jsonb column in a new migration, OR
 - Leave in the frontend forever (acceptable — these tags rarely change)
 
-### GitHub Org migration (Stage 1 of user prereqs)
-- **Status**: deferred. Repos still under personal `AleksandarCakic`.
-- **Action**: when ready, create GitHub Org `career-flow`, transfer both repos, add Atiyeh as Owner, update local `git remote set-url` for both repos, re-link Railway services to the new repo URLs.
-
 ### Clerk Production instance
 - **Status**: deferred. Free Hobby tier locks Clerk to a dev instance only; custom domains are a Pro plan feature ($25/mo).
 - **For MVP**: dev instance handles admin-only login (2 users) with no MAU concern.

@@ -6,7 +6,7 @@ Python FastAPI backend for [career-flow.com](https://www.career-flow.com), with 
 
 ### Issue tracker
 
-Issues live in GitHub Issues on `AleksandarCakic/career-flow-backend`, managed via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+Issues live in GitHub Issues on `career-flow-coaching/career-flow-backend`, managed via the `gh` CLI. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
