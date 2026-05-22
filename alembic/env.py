@@ -62,10 +62,9 @@ if context.is_offline_mode():
     run_migrations_offline()
 else:
     run_migrations_online()
-    # On Railway (and other managed Postgres with TLS), asyncpg leaves SSL
-    # transport tasks alive after the engine is disposed, preventing the
-    # Python process from exiting. Migrations have committed by this point,
-    # so a force-exit is safe. Opt-in via env var so local commands like
-    # `alembic history` are unaffected.
-    if os.environ.get("ALEMBIC_FORCE_EXIT") == "1":
+    # asyncpg leaves SSL transport tasks alive after engine.dispose(), which
+    # prevents the process from exiting on managed Postgres with TLS (Railway).
+    # Migrations have committed at this point, so force-exit is safe. Gate on
+    # Railway's built-in env so local `alembic` commands keep clean shutdown.
+    if os.environ.get("RAILWAY_ENVIRONMENT_ID") or os.environ.get("ALEMBIC_FORCE_EXIT") == "1":
         os._exit(0)
