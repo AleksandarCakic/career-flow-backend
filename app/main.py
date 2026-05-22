@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 
 from app.api.routes import (
+    admin,
     coaches,
     health,
     packages,
@@ -60,3 +61,4 @@ app.include_router(packages.router)
 app.include_router(success_stories.router)
 app.include_router(public.router)
 app.include_router(resources.router)
+app.include_router(admin.router)
