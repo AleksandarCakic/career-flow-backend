@@ -21,7 +21,8 @@ class Settings(BaseSettings):
     @field_validator("database_url")
     @classmethod
     def _ensure_asyncpg_driver(cls, v: str) -> str:
-        # Railway/Heroku/etc. expose plain "postgresql://" (or legacy "postgres://"); SQLAlchemy 2.0 async needs the asyncpg driver explicitly.
+        # Managed Postgres providers expose bare "postgresql://" (or legacy
+        # "postgres://"); SQLAlchemy 2.0 async requires the asyncpg driver.
         if v.startswith("postgresql+"):
             return v
         if v.startswith("postgresql://"):

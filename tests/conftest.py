@@ -42,7 +42,12 @@ app.dependency_overrides[get_db_session] = _override_get_db
 
 
 @pytest.fixture(autouse=True)
-async def _clean_db() -> AsyncIterator[None]:
+async def _clean_db(request: pytest.FixtureRequest) -> AsyncIterator[None]:
+    # Unit tests are DB-free by contract — skip the truncate to keep them
+    # runnable without Postgres in CI and locally.
+    if request.node.get_closest_marker("unit"):
+        yield
+        return
     await _truncate_all()
     yield
     await _truncate_all()
