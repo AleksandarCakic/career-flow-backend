@@ -1,4 +1,5 @@
 import asyncio
+import os
 from logging.config import fileConfig
 
 from sqlalchemy import pool
@@ -61,3 +62,10 @@ if context.is_offline_mode():
     run_migrations_offline()
 else:
     run_migrations_online()
+    # On Railway (and other managed Postgres with TLS), asyncpg leaves SSL
+    # transport tasks alive after the engine is disposed, preventing the
+    # Python process from exiting. Migrations have committed by this point,
+    # so a force-exit is safe. Opt-in via env var so local commands like
+    # `alembic history` are unaffected.
+    if os.environ.get("ALEMBIC_FORCE_EXIT") == "1":
+        os._exit(0)
