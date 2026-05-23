@@ -1,15 +1,18 @@
-"""Admin-only read endpoints — paginated lists across every coach-managed
-entity. Every route is guarded by `require_admin`, which checks the Clerk
-session token against the configured admin email allowlist.
+"""Admin-only endpoints — paginated reads and partial-update writes across
+every coach-managed entity. Every route is guarded by `require_admin`, which
+checks the Clerk session token against the configured admin email allowlist.
 """
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Annotated, Any
+from uuid import UUID
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.engine import Row
+from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import DBSession
 from app.core.security import AdminClaims
@@ -26,10 +29,14 @@ from app.models import (
 from app.schemas.admin import (
     AdminListResponse,
     BookingAdminRead,
+    CoachAdminRead,
     LeadAdminRead,
+    LeadUpdate,
     PaymentAdminRead,
     QuizResponseAdminRead,
     SuccessStoryAdminRead,
+    SuccessStoryCreate,
+    SuccessStoryUpdate,
     WaitlistAdminRead,
 )
 
@@ -196,6 +203,153 @@ async def list_success_stories(
         limit=limit,
         offset=offset,
     )
+
+
+# --- Write endpoints -----------------------------------------------------------
+
+
+@router.get("/coaches", response_model=list[CoachAdminRead])
+async def list_admin_coaches(
+    session: DBSession,
+    _claims: AdminClaims,
+) -> list[CoachAdminRead]:
+    """Every coach (active and inactive), excluding soft-deleted ones.
+
+    Distinct from `GET /coaches`, which only returns active+ordered coaches
+    for public marketing pages.
+    """
+    stmt = (
+        select(Coach)
+        .where(Coach.deleted_at.is_(None))
+        .order_by(Coach.sort_order, Coach.name)
+    )
+    coaches = (await session.execute(stmt)).scalars().all()
+    return [CoachAdminRead.model_validate(coach) for coach in coaches]
+
+
+@router.patch("/leads/{lead_id}", response_model=LeadAdminRead)
+async def update_lead(
+    lead_id: UUID,
+    payload: LeadUpdate,
+    session: DBSession,
+    _claims: AdminClaims,
+) -> LeadAdminRead:
+    lead = await session.get(Lead, lead_id)
+    if lead is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found.")
+    set_fields = payload.model_fields_set
+    if "status" in set_fields and payload.status is not None:
+        lead.status = payload.status
+    if "assigned_coach_id" in set_fields:
+        if payload.assigned_coach_id is not None:
+            coach = await session.get(Coach, payload.assigned_coach_id)
+            if coach is None or coach.deleted_at is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Coach not found.",
+                )
+        lead.assigned_coach_id = payload.assigned_coach_id
+    await session.commit()
+    await session.refresh(lead)
+    slug: str | None = None
+    if lead.assigned_coach_id is not None:
+        coach = await session.get(Coach, lead.assigned_coach_id)
+        slug = coach.slug if coach is not None else None
+    return LeadAdminRead.model_validate({**lead.__dict__, "assigned_coach_slug": slug})
+
+
+@router.post(
+    "/success-stories",
+    response_model=SuccessStoryAdminRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_success_story(
+    payload: SuccessStoryCreate,
+    session: DBSession,
+    _claims: AdminClaims,
+) -> SuccessStoryAdminRead:
+    if payload.coach_id is not None:
+        coach = await session.get(Coach, payload.coach_id)
+        if coach is None or coach.deleted_at is not None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Coach not found.",
+            )
+    story = SuccessStory(**payload.model_dump())
+    session.add(story)
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Slug already in use.",
+        ) from exc
+    await session.refresh(story)
+    slug_for_coach: str | None = None
+    if story.coach_id is not None:
+        coach = await session.get(Coach, story.coach_id)
+        slug_for_coach = coach.slug if coach is not None else None
+    return SuccessStoryAdminRead.model_validate(
+        {**story.__dict__, "coach_slug": slug_for_coach}
+    )
+
+
+@router.patch("/success-stories/{story_id}", response_model=SuccessStoryAdminRead)
+async def update_success_story(
+    story_id: UUID,
+    payload: SuccessStoryUpdate,
+    session: DBSession,
+    _claims: AdminClaims,
+) -> SuccessStoryAdminRead:
+    story = await session.get(SuccessStory, story_id)
+    if story is None or story.deleted_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Success story not found.",
+        )
+    updates = payload.model_dump(exclude_unset=True)
+    if "coach_id" in updates and updates["coach_id"] is not None:
+        coach = await session.get(Coach, updates["coach_id"])
+        if coach is None or coach.deleted_at is not None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Coach not found.",
+            )
+    for field, value in updates.items():
+        setattr(story, field, value)
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Slug already in use.",
+        ) from exc
+    await session.refresh(story)
+    slug_for_coach: str | None = None
+    if story.coach_id is not None:
+        coach = await session.get(Coach, story.coach_id)
+        slug_for_coach = coach.slug if coach is not None else None
+    return SuccessStoryAdminRead.model_validate(
+        {**story.__dict__, "coach_slug": slug_for_coach}
+    )
+
+
+@router.delete("/success-stories/{story_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_success_story(
+    story_id: UUID,
+    session: DBSession,
+    _claims: AdminClaims,
+) -> None:
+    story = await session.get(SuccessStory, story_id)
+    if story is None or story.deleted_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Success story not found.",
+        )
+    story.deleted_at = datetime.now(UTC)
+    await session.commit()
 
 
 # --- Row → schema adapters -----------------------------------------------------
