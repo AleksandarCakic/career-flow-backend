@@ -260,6 +260,7 @@ async def test_admin_quiz_responses_join_coach_slug(
     )
     db_session.add(quiz)
     await db_session.commit()
+    await db_session.close()  # release the asyncpg connection before HTTP
     response = await client.get(
         "/admin/quiz-responses", headers={"Authorization": f"Bearer {admin_token}"}
     )
@@ -304,6 +305,7 @@ async def test_admin_coaches_list_includes_inactive(
     )
     db_session.add(inactive)
     await db_session.commit()
+    await db_session.close()
     response = await client.get(
         "/admin/coaches", headers={"Authorization": f"Bearer {admin_token}"}
     )
@@ -583,9 +585,11 @@ async def test_update_lead_can_clear_notes(
     db_session.add(lead)
     await db_session.commit()
     await db_session.refresh(lead)
+    lead_id = lead.id
+    await db_session.close()
 
     response = await client.patch(
-        f"/admin/leads/{lead.id}",
+        f"/admin/leads/{lead_id}",
         json={"notes": None},
         headers={"Authorization": f"Bearer {admin_token}"},
     )
@@ -603,6 +607,7 @@ async def test_list_leads_filters_by_status(
 ) -> None:
     seeded_leads[0].status = LeadStatus.QUALIFIED
     await db_session.commit()
+    await db_session.close()
 
     response = await client.get(
         "/admin/leads?status=qualified",
@@ -658,6 +663,7 @@ async def test_list_leads_filter_total_excludes_filtered_out_rows(
     # Make exactly one lead `paid`; total must be 1 for that filter.
     seeded_leads[0].status = LeadStatus.PAID
     await db_session.commit()
+    await db_session.close()
 
     response = await client.get(
         "/admin/leads?status=paid",
@@ -665,3 +671,86 @@ async def test_list_leads_filter_total_excludes_filtered_out_rows(
     )
     assert response.status_code == 200
     assert response.json()["total"] == 1
+
+
+# --- Week 8: CSV exports ------------------------------------------------------
+
+
+@pytest.mark.integration
+async def test_export_leads_csv_requires_admin(client: AsyncClient) -> None:
+    response = await client.get("/admin/leads/export.csv")
+    assert response.status_code == 401
+
+
+@pytest.mark.integration
+async def test_export_leads_csv_returns_csv(
+    client: AsyncClient,
+    jwks_mock: respx.Router,
+    admin_token: str,
+    seeded_leads: list[Lead],
+) -> None:
+    response = await client.get(
+        "/admin/leads/export.csv",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/csv")
+    assert "attachment;" in response.headers["content-disposition"]
+    body = response.text
+    lines = body.splitlines()
+    # Header + 3 seeded leads
+    assert lines[0].startswith("id,created_at,updated_at,name,email")
+    assert len(lines) >= 4
+    # All seeded emails appear somewhere in the body
+    assert "lead0@example.com" in body
+    assert "lead2@example.com" in body
+
+
+@pytest.mark.integration
+async def test_export_leads_csv_honors_status_filter(
+    client: AsyncClient,
+    jwks_mock: respx.Router,
+    admin_token: str,
+    db_session: AsyncSession,
+    seeded_leads: list[Lead],
+) -> None:
+    seeded_leads[0].status = LeadStatus.PAID
+    await db_session.commit()
+    await db_session.close()
+
+    response = await client.get(
+        "/admin/leads/export.csv?status=paid",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert response.status_code == 200
+    lines = response.text.splitlines()
+    assert len(lines) == 2  # header + 1 paid row
+
+
+@pytest.mark.integration
+async def test_export_waitlist_csv_returns_csv(
+    client: AsyncClient,
+    jwks_mock: respx.Router,
+    admin_token: str,
+    db_session: AsyncSession,
+) -> None:
+    db_session.add(
+        WaitlistEntry(
+            email="csv-waitlist@example.com",
+            current_role="Engineer",
+            years_of_experience="5-10",
+            biggest_challenge="Need direction",
+            workshop_interests=["resume", "interview"],
+        )
+    )
+    await db_session.commit()
+
+    response = await client.get(
+        "/admin/waitlist/export.csv",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert response.status_code == 200
+    body = response.text
+    assert "csv-waitlist@example.com" in body
+    # workshop_interests is a list — should be flattened with `, `
+    assert "resume, interview" in body

@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     sentry_traces_sample_rate: float = 0.1
 
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:3000"])
+    # Public-facing URL of the marketing/web app — used to build links
+    # embedded in transactional emails (e.g. newsletter confirmation).
+    public_web_url: str = "http://localhost:3000"
 
     admin_emails: list[str] = Field(default_factory=list)
 

@@ -42,7 +42,7 @@ Mirror of this file lives in the frontend repo. Keep both in sync.
 - Add as a `coaches.expertise` jsonb column in a new migration, OR
 - Leave in the frontend forever (acceptable — these tags rarely change)
 
-### Clerk Production instance
-- **Status**: deferred. Free Hobby tier locks Clerk to a dev instance only; custom domains are a Pro plan feature ($25/mo).
-- **For MVP**: dev instance handles admin-only login (2 users) with no MAU concern.
-- **Action when upgrading**: pay for Pro, set up production domain `clerk.career-flow.com` via DNS in Squarespace, regenerate `pk_live_...` + `sk_live_...` keys, swap into Railway production env vars.
+### Clerk Production instance — decided no (2026-05-23)
+- **Status**: won't do. Staying on Clerk dev instance permanently.
+- **Why**: Pro tier ($25/mo) is the only way to get a custom Clerk domain (`clerk.career-flow.com`) and `pk_live_...` keys. For the MVP and likely forever, only the two coach accounts need admin sign-in — the dev instance's MAU limits aren't a concern, and signing in via `*.clerk.accounts.dev` is acceptable for an internal-only surface.
+- **Implication**: never need to swap to `pk_live_...` / `sk_live_...`. If we ever launch client-facing accounts (currently out of MVP scope per spec §3), revisit.

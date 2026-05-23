@@ -79,46 +79,61 @@ async def test_list_packages(client: AsyncClient, db_session: AsyncSession) -> N
     assert "test-pkg" in slugs
 
 
-@pytest.mark.skip(
-    reason=(
-        "asyncpg/SQLAlchemy 'another operation in progress' when this test uses both "
-        "db_session and an HTTP request in the same coroutine. Flaky test-harness issue "
-        "rather than a code bug — the endpoint is verified by the e2e curl in Plan 3 "
-        "and by smaller integration tests above. Revisit when migrating to pytest-asyncio "
-        "session loop with explicit engine disposal."
-    )
-)
 @pytest.mark.integration
 async def test_list_success_stories_omits_unpublished(
-    client: AsyncClient, db_session: AsyncSession, seeded_coach: Coach
+    client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    published = SuccessStory(
-        slug="story-published",
-        client_name="Pat",
-        client_role_before="X",
-        client_role_after="Y",
-        client_company_after="Acme",
-        story_short="Worked out great.",
-        coach_id=seeded_coach.id,
-        is_featured=True,
-        sort_order=0,
-        published_at=datetime.now(UTC),
+    # Seed everything inline (no separate seeded_coach fixture) and commit
+    # once before any HTTP traffic — earlier versions of this test combined a
+    # fixture-managed session with a follow-up HTTP request, which triggered
+    # asyncpg "another operation in progress". Single-commit + explicit close
+    # below sidesteps that.
+    coach = Coach(
+        email="story-coach@career-flow.com",
+        name="Story Coach",
+        slug="story-coach",
+        title="Test Title",
+        bio_short="Short bio",
+        bio_long="Long bio",
+        calendly_url="https://calendly.example/story",
+        is_active=True,
+        sort_order=42,
     )
-    draft = SuccessStory(
-        slug="story-draft",
-        client_name="Drew",
-        client_role_before="A",
-        client_role_after="B",
-        client_company_after="Beta",
-        story_short="In progress.",
-        coach_id=seeded_coach.id,
-        is_featured=False,
-        sort_order=1,
-        published_at=None,
+    db_session.add(coach)
+    await db_session.flush()  # populate coach.id without releasing the txn
+
+    db_session.add_all(
+        [
+            SuccessStory(
+                slug="story-published",
+                client_name="Pat",
+                client_role_before="X",
+                client_role_after="Y",
+                client_company_after="Acme",
+                story_short="Worked out great.",
+                coach_id=coach.id,
+                is_featured=True,
+                sort_order=0,
+                published_at=datetime.now(UTC),
+            ),
+            SuccessStory(
+                slug="story-draft",
+                client_name="Drew",
+                client_role_before="A",
+                client_role_after="B",
+                client_company_after="Beta",
+                story_short="In progress.",
+                coach_id=coach.id,
+                is_featured=False,
+                sort_order=1,
+                published_at=None,
+            ),
+        ]
     )
-    db_session.add(published)
-    db_session.add(draft)
     await db_session.commit()
+    # Drop any in-flight asyncpg cursor state from the seed before issuing
+    # an HTTP request that opens its own session on the same engine.
+    await db_session.close()
 
     response = await client.get("/success-stories")
     assert response.status_code == 200
@@ -126,4 +141,4 @@ async def test_list_success_stories_omits_unpublished(
     assert "story-published" in slugs
     assert "story-draft" not in slugs
     published_entry = next(e for e in response.json() if e["slug"] == "story-published")
-    assert published_entry["coach_slug"] == seeded_coach.slug
+    assert published_entry["coach_slug"] == coach.slug

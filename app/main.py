@@ -10,6 +10,7 @@ from app.api.routes import (
     admin,
     coaches,
     health,
+    newsletter,
     packages,
     public,
     resources,
@@ -61,4 +62,5 @@ app.include_router(packages.router)
 app.include_router(success_stories.router)
 app.include_router(public.router)
 app.include_router(resources.router)
+app.include_router(newsletter.router)
 app.include_router(admin.router)
