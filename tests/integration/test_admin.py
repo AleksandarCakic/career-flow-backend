@@ -754,3 +754,172 @@ async def test_export_waitlist_csv_returns_csv(
     assert "csv-waitlist@example.com" in body
     # workshop_interests is a list — should be flattened with `, `
     assert "resume, interview" in body
+
+
+# --- Week 9: extended search + related lookup --------------------------------
+
+
+@pytest.mark.integration
+async def test_list_waitlist_search_matches_email_or_role(
+    client: AsyncClient,
+    jwks_mock: respx.Router,
+    admin_token: str,
+    db_session: AsyncSession,
+) -> None:
+    db_session.add_all(
+        [
+            WaitlistEntry(
+                email="searchable-w@example.com",
+                current_role="Backend Engineer",
+                years_of_experience="5-10",
+                biggest_challenge="x",
+            ),
+            WaitlistEntry(
+                email="other-w@example.com",
+                current_role="Product Manager",
+                years_of_experience="5-10",
+                biggest_challenge="x",
+            ),
+        ]
+    )
+    await db_session.commit()
+    await db_session.close()
+
+    by_email = await client.get(
+        "/admin/waitlist?search=searchable-w",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    by_role = await client.get(
+        "/admin/waitlist?search=backend",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    for response in (by_email, by_role):
+        assert response.status_code == 200
+        items = response.json()["items"]
+        assert any(item["email"] == "searchable-w@example.com" for item in items)
+        assert all(
+            "searchable-w" in item["email"] or "backend" in item["current_role"].lower()
+            for item in items
+        )
+
+
+@pytest.mark.integration
+async def test_list_quiz_search_matches_email(
+    client: AsyncClient,
+    jwks_mock: respx.Router,
+    admin_token: str,
+    db_session: AsyncSession,
+) -> None:
+    db_session.add_all(
+        [
+            QuizResponse(email="findme-q@example.com", answers={}),
+            QuizResponse(email="other-q@example.com", answers={}),
+        ]
+    )
+    await db_session.commit()
+    await db_session.close()
+
+    response = await client.get(
+        "/admin/quiz-responses?search=findme-q",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert response.status_code == 200
+    emails = {item["email"] for item in response.json()["items"]}
+    assert emails == {"findme-q@example.com"}
+
+
+@pytest.mark.integration
+async def test_list_success_stories_search_matches_slug_or_name(
+    client: AsyncClient,
+    jwks_mock: respx.Router,
+    admin_token: str,
+    db_session: AsyncSession,
+) -> None:
+    db_session.add_all(
+        [
+            SuccessStory(slug="alex-promo-special", client_name="Alex Example", story_short="x"),
+            SuccessStory(slug="other-story", client_name="Drew Other", story_short="y"),
+        ]
+    )
+    await db_session.commit()
+    await db_session.close()
+
+    by_slug = await client.get(
+        "/admin/success-stories?search=alex-promo",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    by_name = await client.get(
+        "/admin/success-stories?search=Drew",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert by_slug.status_code == 200
+    assert by_name.status_code == 200
+    slugs_a = {item["slug"] for item in by_slug.json()["items"]}
+    slugs_b = {item["slug"] for item in by_name.json()["items"]}
+    assert "alex-promo-special" in slugs_a
+    assert "other-story" in slugs_b
+
+
+@pytest.mark.integration
+async def test_related_endpoint_counts_across_tables(
+    client: AsyncClient,
+    jwks_mock: respx.Router,
+    admin_token: str,
+    db_session: AsyncSession,
+) -> None:
+    from app.models import NewsletterSubscription
+
+    email = "dedup-test@example.com"
+    db_session.add_all(
+        [
+            Lead(name="A", email=email, status=LeadStatus.NEW),
+            Lead(name="B", email=email, status=LeadStatus.NEW),
+            WaitlistEntry(
+                email=email,
+                current_role="Engineer",
+                years_of_experience="3-5",
+                biggest_challenge="x",
+            ),
+            QuizResponse(email=email, answers={"q": "a"}),
+            NewsletterSubscription(email=email, confirmation_token="t-dedup-test-1234567890"),
+        ]
+    )
+    await db_session.commit()
+    await db_session.close()
+
+    response = await client.get(
+        f"/admin/related?email={email}",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert response.status_code == 200
+    counts = response.json()
+    assert counts["leads"] == 2
+    assert counts["waitlist"] == 1
+    assert counts["quiz_responses"] == 1
+    assert counts["newsletter_subscriptions"] == 1
+    assert counts["bookings"] == 0
+
+
+@pytest.mark.integration
+async def test_related_endpoint_is_case_insensitive(
+    client: AsyncClient,
+    jwks_mock: respx.Router,
+    admin_token: str,
+    db_session: AsyncSession,
+) -> None:
+    db_session.add(Lead(name="A", email="mixedcase-dedup@example.com", status=LeadStatus.NEW))
+    await db_session.commit()
+    await db_session.close()
+
+    response = await client.get(
+        "/admin/related?email=MIXEDCASE-DEDUP@example.com",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["leads"] == 1
+
+
+@pytest.mark.integration
+async def test_related_endpoint_requires_admin(client: AsyncClient) -> None:
+    response = await client.get("/admin/related?email=x@example.com")
+    assert response.status_code == 401

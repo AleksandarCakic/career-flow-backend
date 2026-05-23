@@ -105,14 +105,24 @@ async def list_waitlist(
     _claims: AdminClaims,
     limit: Limit = 50,
     offset: Offset = 0,
+    search: Annotated[str | None, Query(max_length=200)] = None,
 ) -> AdminListResponse[WaitlistAdminRead]:
-    stmt = (
-        select(WaitlistEntry).order_by(WaitlistEntry.created_at.desc()).offset(offset).limit(limit)
-    )
-    rows = (await session.execute(stmt)).scalars().all()
+    base: Select[Any] = select(WaitlistEntry)
+    count_base: Select[Any] = select(func.count()).select_from(WaitlistEntry)
+    if search:
+        pattern = f"%{search}%"
+        condition = or_(
+            WaitlistEntry.email.ilike(pattern),
+            WaitlistEntry.current_role.ilike(pattern),
+        )
+        base = base.where(condition)
+        count_base = count_base.where(condition)
+    page_stmt = base.order_by(WaitlistEntry.created_at.desc()).offset(offset).limit(limit)
+    rows = (await session.execute(page_stmt)).scalars().all()
+    total = int((await session.execute(count_base)).scalar_one())
     return AdminListResponse[WaitlistAdminRead](
         items=[WaitlistAdminRead.model_validate(row) for row in rows],
-        total=await _count(session, WaitlistEntry),
+        total=total,
         limit=limit,
         offset=offset,
     )
@@ -124,19 +134,23 @@ async def list_quiz_responses(
     _claims: AdminClaims,
     limit: Limit = 50,
     offset: Offset = 0,
+    search: Annotated[str | None, Query(max_length=200)] = None,
 ) -> AdminListResponse[QuizResponseAdminRead]:
-    stmt = (
-        select(QuizResponse, Coach.slug.label("matched_coach_slug"))
-        .outerjoin(Coach, QuizResponse.matched_coach_id == Coach.id)
-        .order_by(QuizResponse.created_at.desc())
-        .offset(offset)
-        .limit(limit)
+    base: Select[Any] = select(QuizResponse, Coach.slug.label("matched_coach_slug")).outerjoin(
+        Coach, QuizResponse.matched_coach_id == Coach.id
     )
-    rows = (await session.execute(stmt)).all()
+    count_base: Select[Any] = select(func.count()).select_from(QuizResponse)
+    if search:
+        pattern = f"%{search}%"
+        base = base.where(QuizResponse.email.ilike(pattern))
+        count_base = count_base.where(QuizResponse.email.ilike(pattern))
+    page_stmt = base.order_by(QuizResponse.created_at.desc()).offset(offset).limit(limit)
+    rows = (await session.execute(page_stmt)).all()
     items = [_quiz_row(row) for row in rows]
+    total = int((await session.execute(count_base)).scalar_one())
     return AdminListResponse[QuizResponseAdminRead](
         items=items,
-        total=await _count(session, QuizResponse),
+        total=total,
         limit=limit,
         offset=offset,
     )
@@ -201,27 +215,69 @@ async def list_success_stories(
     _claims: AdminClaims,
     limit: Limit = 50,
     offset: Offset = 0,
+    search: Annotated[str | None, Query(max_length=200)] = None,
 ) -> AdminListResponse[SuccessStoryAdminRead]:
-    stmt = (
+    base: Select[Any] = (
         select(SuccessStory, Coach.slug.label("coach_slug"))
         .outerjoin(Coach, SuccessStory.coach_id == Coach.id)
         .where(SuccessStory.deleted_at.is_(None))
-        .order_by(SuccessStory.created_at.desc())
-        .offset(offset)
-        .limit(limit)
     )
-    rows = (await session.execute(stmt)).all()
-    items = [_story_row(row) for row in rows]
-    total_stmt = (
+    count_base: Select[Any] = (
         select(func.count()).select_from(SuccessStory).where(SuccessStory.deleted_at.is_(None))
     )
-    total = int((await session.execute(total_stmt)).scalar_one())
+    if search:
+        pattern = f"%{search}%"
+        condition = or_(
+            SuccessStory.slug.ilike(pattern),
+            SuccessStory.client_name.ilike(pattern),
+        )
+        base = base.where(condition)
+        count_base = count_base.where(condition)
+    page_stmt = base.order_by(SuccessStory.created_at.desc()).offset(offset).limit(limit)
+    rows = (await session.execute(page_stmt)).all()
+    items = [_story_row(row) for row in rows]
+    total = int((await session.execute(count_base)).scalar_one())
     return AdminListResponse[SuccessStoryAdminRead](
         items=items,
         total=total,
         limit=limit,
         offset=offset,
     )
+
+
+# --- Cross-entity lookups ------------------------------------------------------
+
+
+@router.get("/related", response_model=dict[str, int])
+async def list_related_by_email(
+    session: DBSession,
+    _claims: AdminClaims,
+    email: Annotated[str, Query(min_length=3, max_length=320)],
+) -> dict[str, int]:
+    """Count rows across every email-keyed table for the given email.
+
+    Used by the admin lead drawer to surface "this person also did X" context
+    before a coach hops on a discovery call. Email match is case-insensitive
+    via ILIKE — Postgres collation choices on the email columns vary.
+    """
+    from app.models import NewsletterSubscription
+
+    normalized = email.strip().lower()
+    pattern = normalized  # case-insensitive match via ILIKE
+
+    async def _count_where(model: Any, column: Any) -> int:
+        stmt = select(func.count()).select_from(model).where(column.ilike(pattern))
+        return int((await session.execute(stmt)).scalar_one())
+
+    return {
+        "leads": await _count_where(Lead, Lead.email),
+        "waitlist": await _count_where(WaitlistEntry, WaitlistEntry.email),
+        "quiz_responses": await _count_where(QuizResponse, QuizResponse.email),
+        "bookings": await _count_where(Booking, Booking.invitee_email),
+        "newsletter_subscriptions": await _count_where(
+            NewsletterSubscription, NewsletterSubscription.email
+        ),
+    }
 
 
 # --- Write endpoints -----------------------------------------------------------
