@@ -29,7 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import security
 from app.core.config import get_settings
-from app.models import Coach, Lead, LeadStatus, QuizResponse, WaitlistEntry
+from app.models import Coach, Lead, LeadStatus, QuizResponse, SuccessStory, WaitlistEntry
 
 JWKS_URL = "https://test.clerk.example.com/.well-known/jwks.json"
 TEST_KID = "test-kid-admin"
@@ -280,3 +280,271 @@ async def test_admin_endpoint_rejects_bad_limit(
         headers={"Authorization": f"Bearer {admin_token}"},
     )
     assert response.status_code == 422
+
+
+# --- Write actions (Week 6) ---------------------------------------------------
+
+
+@pytest.mark.integration
+async def test_admin_coaches_list_includes_inactive(
+    client: AsyncClient,
+    jwks_mock: respx.Router,
+    admin_token: str,
+    db_session: AsyncSession,
+    seeded_coach: Coach,
+) -> None:
+    inactive = Coach(
+        email="inactive@career-flow.com",
+        name="Inactive Coach",
+        slug="inactive-coach",
+        title="Inactive",
+        bio_short="",
+        bio_long="",
+        calendly_url="https://calendly.example/inactive",
+        is_active=False,
+        sort_order=999,
+    )
+    db_session.add(inactive)
+    await db_session.commit()
+    response = await client.get(
+        "/admin/coaches", headers={"Authorization": f"Bearer {admin_token}"}
+    )
+    assert response.status_code == 200
+    items = response.json()
+    slugs = {item["slug"] for item in items}
+    assert seeded_coach.slug in slugs
+    assert "inactive-coach" in slugs
+    inactive_row = next(item for item in items if item["slug"] == "inactive-coach")
+    assert inactive_row["is_active"] is False
+
+
+@pytest.mark.integration
+async def test_admin_coaches_requires_admin(client: AsyncClient) -> None:
+    response = await client.get("/admin/coaches")
+    assert response.status_code == 401
+
+
+@pytest.mark.integration
+async def test_update_lead_changes_status(
+    client: AsyncClient,
+    jwks_mock: respx.Router,
+    admin_token: str,
+    seeded_leads: list[Lead],
+) -> None:
+    lead = seeded_leads[0]
+    response = await client.patch(
+        f"/admin/leads/{lead.id}",
+        json={"status": "contacted"},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "contacted"
+
+
+@pytest.mark.integration
+async def test_update_lead_assigns_coach(
+    client: AsyncClient,
+    jwks_mock: respx.Router,
+    admin_token: str,
+    seeded_leads: list[Lead],
+    seeded_coach: Coach,
+) -> None:
+    lead = seeded_leads[1]  # unassigned coach in seed
+    assert lead.assigned_coach_id is None
+    response = await client.patch(
+        f"/admin/leads/{lead.id}",
+        json={"assigned_coach_id": str(seeded_coach.id)},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["assigned_coach_id"] == str(seeded_coach.id)
+    assert payload["assigned_coach_slug"] == seeded_coach.slug
+
+
+@pytest.mark.integration
+async def test_update_lead_unassigns_coach(
+    client: AsyncClient,
+    jwks_mock: respx.Router,
+    admin_token: str,
+    seeded_leads: list[Lead],
+) -> None:
+    lead = seeded_leads[0]  # has a coach assigned in seed
+    assert lead.assigned_coach_id is not None
+    response = await client.patch(
+        f"/admin/leads/{lead.id}",
+        json={"assigned_coach_id": None},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["assigned_coach_id"] is None
+    assert response.json()["assigned_coach_slug"] is None
+
+
+@pytest.mark.integration
+async def test_update_lead_404_when_missing(
+    client: AsyncClient, jwks_mock: respx.Router, admin_token: str
+) -> None:
+    import uuid
+
+    response = await client.patch(
+        f"/admin/leads/{uuid.uuid4()}",
+        json={"status": "contacted"},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert response.status_code == 404
+
+
+@pytest.mark.integration
+async def test_update_lead_422_on_unknown_coach(
+    client: AsyncClient,
+    jwks_mock: respx.Router,
+    admin_token: str,
+    seeded_leads: list[Lead],
+) -> None:
+    import uuid
+
+    response = await client.patch(
+        f"/admin/leads/{seeded_leads[0].id}",
+        json={"assigned_coach_id": str(uuid.uuid4())},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert response.status_code == 422
+
+
+@pytest.mark.integration
+async def test_update_lead_requires_admin(
+    client: AsyncClient, seeded_leads: list[Lead]
+) -> None:
+    response = await client.patch(
+        f"/admin/leads/{seeded_leads[0].id}",
+        json={"status": "contacted"},
+    )
+    assert response.status_code == 401
+
+
+@pytest.mark.integration
+async def test_create_success_story(
+    client: AsyncClient,
+    jwks_mock: respx.Router,
+    admin_token: str,
+    seeded_coach: Coach,
+) -> None:
+    response = await client.post(
+        "/admin/success-stories",
+        json={
+            "slug": "alex-promoted",
+            "client_name": "Alex Example",
+            "client_role_before": "Engineer",
+            "client_role_after": "Engineering Manager",
+            "story_short": "Got promoted",
+            "coach_id": str(seeded_coach.id),
+            "is_featured": True,
+        },
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["slug"] == "alex-promoted"
+    assert payload["coach_slug"] == seeded_coach.slug
+    assert payload["is_featured"] is True
+
+
+@pytest.mark.integration
+async def test_create_success_story_rejects_duplicate_slug(
+    client: AsyncClient,
+    jwks_mock: respx.Router,
+    admin_token: str,
+    db_session: AsyncSession,
+) -> None:
+    existing = SuccessStory(
+        slug="dup-slug",
+        client_name="Existing",
+        story_short="Hi",
+    )
+    db_session.add(existing)
+    await db_session.commit()
+    response = await client.post(
+        "/admin/success-stories",
+        json={"slug": "dup-slug", "client_name": "New", "story_short": "Hi"},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert response.status_code == 409
+
+
+@pytest.mark.integration
+async def test_update_success_story_publishes_and_unpublishes(
+    client: AsyncClient,
+    jwks_mock: respx.Router,
+    admin_token: str,
+    db_session: AsyncSession,
+) -> None:
+    story = SuccessStory(slug="toggle-me", client_name="Toggle", story_short="x")
+    db_session.add(story)
+    await db_session.commit()
+    await db_session.refresh(story)
+
+    # Publish
+    response = await client.patch(
+        f"/admin/success-stories/{story.id}",
+        json={"published_at": "2026-05-23T00:00:00Z"},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["published_at"] is not None
+
+    # Unpublish
+    response = await client.patch(
+        f"/admin/success-stories/{story.id}",
+        json={"published_at": None},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["published_at"] is None
+
+
+@pytest.mark.integration
+async def test_delete_success_story_is_soft(
+    client: AsyncClient,
+    jwks_mock: respx.Router,
+    admin_token: str,
+    db_session: AsyncSession,
+) -> None:
+    story = SuccessStory(slug="trash-me", client_name="Trash", story_short="x")
+    db_session.add(story)
+    await db_session.commit()
+    await db_session.refresh(story)
+    story_id = story.id
+
+    response = await client.delete(
+        f"/admin/success-stories/{story_id}",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert response.status_code == 204
+
+    # Deleted row should no longer appear in the admin list.
+    list_response = await client.get(
+        "/admin/success-stories",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    slugs = {item["slug"] for item in list_response.json()["items"]}
+    assert "trash-me" not in slugs
+
+    # Second delete returns 404.
+    response = await client.delete(
+        f"/admin/success-stories/{story_id}",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert response.status_code == 404
+
+
+@pytest.mark.integration
+async def test_success_story_write_endpoints_require_admin(
+    client: AsyncClient,
+) -> None:
+    assert (await client.post("/admin/success-stories", json={})).status_code == 401
+    import uuid
+
+    sid = uuid.uuid4()
+    assert (await client.patch(f"/admin/success-stories/{sid}", json={})).status_code == 401
+    assert (await client.delete(f"/admin/success-stories/{sid}")).status_code == 401

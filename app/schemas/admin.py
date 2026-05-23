@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, EmailStr
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 from app.models import BookingStatus, LeadStatus, PaymentStatus
 
@@ -21,6 +21,65 @@ class AdminListResponse[T](BaseModel):
     total: int
     limit: int
     offset: int
+
+
+class LeadUpdate(BaseModel):
+    """Partial update for a lead. Both fields optional; unset = unchanged."""
+
+    status: LeadStatus | None = None
+    assigned_coach_id: UUID | None = Field(default=None)
+    # Distinguishing "field absent" from "field is null" matters for
+    # assigned_coach_id (null = unassign). Pydantic uses `model_fields_set`
+    # at the route level to disambiguate.
+
+
+class CoachAdminRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    email: EmailStr
+    name: str
+    slug: str
+    title: str
+    bio_short: str
+    bio_long: str
+    headshot_url: str | None
+    calendly_url: str
+    is_active: bool
+    sort_order: int
+    created_at: datetime
+
+
+class SuccessStoryCreate(BaseModel):
+    slug: str = Field(min_length=1, max_length=120)
+    client_name: str = Field(min_length=1, max_length=200)
+    client_role_before: str | None = Field(default=None, max_length=200)
+    client_role_after: str | None = Field(default=None, max_length=200)
+    client_company_after: str | None = Field(default=None, max_length=200)
+    headshot_url: str | None = Field(default=None, max_length=500)
+    linkedin_url: str | None = Field(default=None, max_length=500)
+    story_short: str = ""
+    story_long: str | None = None
+    coach_id: UUID | None = None
+    is_featured: bool = False
+    sort_order: int = 0
+    published_at: datetime | None = None
+
+
+class SuccessStoryUpdate(BaseModel):
+    slug: str | None = Field(default=None, min_length=1, max_length=120)
+    client_name: str | None = Field(default=None, min_length=1, max_length=200)
+    client_role_before: str | None = Field(default=None, max_length=200)
+    client_role_after: str | None = Field(default=None, max_length=200)
+    client_company_after: str | None = Field(default=None, max_length=200)
+    headshot_url: str | None = Field(default=None, max_length=500)
+    linkedin_url: str | None = Field(default=None, max_length=500)
+    story_short: str | None = None
+    story_long: str | None = None
+    coach_id: UUID | None = None
+    is_featured: bool | None = None
+    sort_order: int | None = None
+    published_at: datetime | None = None
 
 
 class LeadAdminRead(BaseModel):

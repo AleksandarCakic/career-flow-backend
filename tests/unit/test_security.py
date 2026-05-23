@@ -129,8 +129,14 @@ async def test_verify_clerk_token_rejects_unknown_kid(
 async def test_verify_clerk_token_returns_503_when_jwks_url_unset(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delenv("CLERK_JWKS_URL", raising=False)
-    get_settings.cache_clear()
+    from app.core.config import Settings
+
+    # Bypass .env.local so the test isn't sensitive to local dev setup.
+    monkeypatch.setattr(
+        security,
+        "get_settings",
+        lambda: Settings(_env_file=None, clerk_jwks_url=""),  # type: ignore[call-arg]
+    )
     with pytest.raises(HTTPException) as exc:
         await security.verify_clerk_token("anything")
     assert exc.value.status_code == 503
