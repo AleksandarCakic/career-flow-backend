@@ -260,6 +260,7 @@ async def test_admin_quiz_responses_join_coach_slug(
     )
     db_session.add(quiz)
     await db_session.commit()
+    await db_session.close()  # release the asyncpg connection before HTTP
     response = await client.get(
         "/admin/quiz-responses", headers={"Authorization": f"Bearer {admin_token}"}
     )
@@ -304,6 +305,7 @@ async def test_admin_coaches_list_includes_inactive(
     )
     db_session.add(inactive)
     await db_session.commit()
+    await db_session.close()
     response = await client.get(
         "/admin/coaches", headers={"Authorization": f"Bearer {admin_token}"}
     )
@@ -583,9 +585,11 @@ async def test_update_lead_can_clear_notes(
     db_session.add(lead)
     await db_session.commit()
     await db_session.refresh(lead)
+    lead_id = lead.id
+    await db_session.close()
 
     response = await client.patch(
-        f"/admin/leads/{lead.id}",
+        f"/admin/leads/{lead_id}",
         json={"notes": None},
         headers={"Authorization": f"Bearer {admin_token}"},
     )
@@ -603,6 +607,7 @@ async def test_list_leads_filters_by_status(
 ) -> None:
     seeded_leads[0].status = LeadStatus.QUALIFIED
     await db_session.commit()
+    await db_session.close()
 
     response = await client.get(
         "/admin/leads?status=qualified",
@@ -658,6 +663,7 @@ async def test_list_leads_filter_total_excludes_filtered_out_rows(
     # Make exactly one lead `paid`; total must be 1 for that filter.
     seeded_leads[0].status = LeadStatus.PAID
     await db_session.commit()
+    await db_session.close()
 
     response = await client.get(
         "/admin/leads?status=paid",
@@ -710,6 +716,7 @@ async def test_export_leads_csv_honors_status_filter(
 ) -> None:
     seeded_leads[0].status = LeadStatus.PAID
     await db_session.commit()
+    await db_session.close()
 
     response = await client.get(
         "/admin/leads/export.csv?status=paid",

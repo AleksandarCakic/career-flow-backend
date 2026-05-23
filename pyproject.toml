@@ -59,7 +59,13 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+# Pin both fixture and test loop scopes to "session" so an async fixture
+# (e.g., db_session) and the test that consumes it run on the SAME event
+# loop. Without aligned scopes, asyncpg connections opened in fixtures get
+# attached to the session loop while tests run on a per-function loop,
+# raising "got Future ... attached to a different loop" on teardown.
 asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
 addopts = "-ra --strict-markers --cov=app --cov-report=term-missing"
 testpaths = ["tests"]
 markers = [
