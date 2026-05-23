@@ -2,6 +2,7 @@ from app.models.base import Base, TimestampedBase
 from app.models.booking import Booking, BookingStatus
 from app.models.coach import Coach
 from app.models.lead import Lead, LeadStatus
+from app.models.newsletter_subscription import NewsletterSubscription
 from app.models.package import Package, PackageTier, PricingModel
 from app.models.payment import Payment, PaymentStatus
 from app.models.quiz_response import QuizResponse
@@ -17,6 +18,7 @@ __all__ = [
     "Coach",
     "Lead",
     "LeadStatus",
+    "NewsletterSubscription",
     "Package",
     "PackageTier",
     "Payment",

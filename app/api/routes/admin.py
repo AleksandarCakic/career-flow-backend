@@ -5,11 +5,15 @@ checks the Clerk session token against the configured admin email allowlist.
 
 from __future__ import annotations
 
+import csv
+import io
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy import Select, func, or_, select
 from sqlalchemy.engine import Row
 from sqlalchemy.exc import IntegrityError
@@ -386,6 +390,119 @@ async def delete_success_story(
         )
     story.deleted_at = datetime.now(UTC)
     await session.commit()
+
+
+# --- CSV exports ---------------------------------------------------------------
+
+
+LEADS_CSV_COLUMNS = [
+    "id",
+    "created_at",
+    "updated_at",
+    "name",
+    "email",
+    "subject",
+    "message",
+    "source_page",
+    "status",
+    "assigned_coach_slug",
+    "notes",
+]
+
+WAITLIST_CSV_COLUMNS = [
+    "id",
+    "created_at",
+    "updated_at",
+    "email",
+    "current_role",
+    "years_of_experience",
+    "biggest_challenge",
+    "linkedin_profile",
+    "coach_preference",
+    "workshop_interests",
+    "status",
+]
+
+
+def _csv_row(columns: list[str], data: dict[str, Any]) -> str:
+    buf = io.StringIO()
+    writer = csv.writer(buf, lineterminator="\n")
+    writer.writerow([_csv_cell(data.get(col)) for col in columns])
+    return buf.getvalue()
+
+
+def _csv_cell(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, list):
+        # join lists with comma+space; nested commas inside list items still
+        # work correctly because the csv writer quotes the whole cell.
+        return ", ".join(str(item) for item in value)
+    return str(value)
+
+
+@router.get("/leads/export.csv")
+async def export_leads_csv(
+    session: DBSession,
+    _claims: AdminClaims,
+    status_filter: Annotated[LeadStatus | None, Query(alias="status")] = None,
+    search: Annotated[str | None, Query(max_length=200)] = None,
+) -> StreamingResponse:
+    stmt = (
+        select(Lead, Coach.slug.label("assigned_coach_slug"))
+        .outerjoin(Coach, Lead.assigned_coach_id == Coach.id)
+        .order_by(Lead.created_at.desc())
+    )
+    stmt = _apply_lead_filters(stmt, status_filter, search)
+    rows = (await session.execute(stmt)).all()
+
+    async def stream() -> AsyncIterator[str]:
+        header_buf = io.StringIO()
+        csv.writer(header_buf, lineterminator="\n").writerow(LEADS_CSV_COLUMNS)
+        yield header_buf.getvalue()
+        for row in rows:
+            lead: Lead = row[0]
+            slug: str | None = row[1]
+            yield _csv_row(
+                LEADS_CSV_COLUMNS,
+                {**lead.__dict__, "assigned_coach_slug": slug, "status": lead.status.value},
+            )
+
+    filename = _csv_filename("leads")
+    return StreamingResponse(
+        stream(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/waitlist/export.csv")
+async def export_waitlist_csv(
+    session: DBSession,
+    _claims: AdminClaims,
+) -> StreamingResponse:
+    stmt = select(WaitlistEntry).order_by(WaitlistEntry.created_at.desc())
+    rows = (await session.execute(stmt)).scalars().all()
+
+    async def stream() -> AsyncIterator[str]:
+        header_buf = io.StringIO()
+        csv.writer(header_buf, lineterminator="\n").writerow(WAITLIST_CSV_COLUMNS)
+        yield header_buf.getvalue()
+        for entry in rows:
+            yield _csv_row(WAITLIST_CSV_COLUMNS, entry.__dict__)
+
+    filename = _csv_filename("waitlist")
+    return StreamingResponse(
+        stream(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+def _csv_filename(prefix: str) -> str:
+    return f"career-flow-{prefix}-{datetime.now(UTC).strftime('%Y%m%d-%H%M%S')}.csv"
 
 
 # --- Row → schema adapters -----------------------------------------------------
