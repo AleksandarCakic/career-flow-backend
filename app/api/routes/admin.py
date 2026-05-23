@@ -103,10 +103,7 @@ async def list_waitlist(
     offset: Offset = 0,
 ) -> AdminListResponse[WaitlistAdminRead]:
     stmt = (
-        select(WaitlistEntry)
-        .order_by(WaitlistEntry.created_at.desc())
-        .offset(offset)
-        .limit(limit)
+        select(WaitlistEntry).order_by(WaitlistEntry.created_at.desc()).offset(offset).limit(limit)
     )
     rows = (await session.execute(stmt)).scalars().all()
     return AdminListResponse[WaitlistAdminRead](
@@ -212,9 +209,7 @@ async def list_success_stories(
     rows = (await session.execute(stmt)).all()
     items = [_story_row(row) for row in rows]
     total_stmt = (
-        select(func.count())
-        .select_from(SuccessStory)
-        .where(SuccessStory.deleted_at.is_(None))
+        select(func.count()).select_from(SuccessStory).where(SuccessStory.deleted_at.is_(None))
     )
     total = int((await session.execute(total_stmt)).scalar_one())
     return AdminListResponse[SuccessStoryAdminRead](
@@ -238,11 +233,7 @@ async def list_admin_coaches(
     Distinct from `GET /coaches`, which only returns active+ordered coaches
     for public marketing pages.
     """
-    stmt = (
-        select(Coach)
-        .where(Coach.deleted_at.is_(None))
-        .order_by(Coach.sort_order, Coach.name)
-    )
+    stmt = select(Coach).where(Coach.deleted_at.is_(None)).order_by(Coach.sort_order, Coach.name)
     coaches = (await session.execute(stmt)).scalars().all()
     return [CoachAdminRead.model_validate(coach) for coach in coaches]
 
@@ -339,9 +330,7 @@ async def create_success_story(
     if story.coach_id is not None:
         coach = await session.get(Coach, story.coach_id)
         slug_for_coach = coach.slug if coach is not None else None
-    return SuccessStoryAdminRead.model_validate(
-        {**story.__dict__, "coach_slug": slug_for_coach}
-    )
+    return SuccessStoryAdminRead.model_validate({**story.__dict__, "coach_slug": slug_for_coach})
 
 
 @router.patch("/success-stories/{story_id}", response_model=SuccessStoryAdminRead)
@@ -380,9 +369,7 @@ async def update_success_story(
     if story.coach_id is not None:
         coach = await session.get(Coach, story.coach_id)
         slug_for_coach = coach.slug if coach is not None else None
-    return SuccessStoryAdminRead.model_validate(
-        {**story.__dict__, "coach_slug": slug_for_coach}
-    )
+    return SuccessStoryAdminRead.model_validate({**story.__dict__, "coach_slug": slug_for_coach})
 
 
 @router.delete("/success-stories/{story_id}", status_code=status.HTTP_204_NO_CONTENT)

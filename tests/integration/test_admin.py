@@ -190,9 +190,7 @@ async def test_admin_leads_orders_newest_first_and_includes_coach_slug(
     seeded_leads: list[Lead],
     seeded_coach: Coach,
 ) -> None:
-    response = await client.get(
-        "/admin/leads", headers={"Authorization": f"Bearer {admin_token}"}
-    )
+    response = await client.get("/admin/leads", headers={"Authorization": f"Bearer {admin_token}"})
     assert response.status_code == 200
     payload = response.json()
     assert payload["total"] >= 3
@@ -413,9 +411,7 @@ async def test_update_lead_422_on_unknown_coach(
 
 
 @pytest.mark.integration
-async def test_update_lead_requires_admin(
-    client: AsyncClient, seeded_leads: list[Lead]
-) -> None:
+async def test_update_lead_requires_admin(client: AsyncClient, seeded_leads: list[Lead]) -> None:
     response = await client.patch(
         f"/admin/leads/{seeded_leads[0].id}",
         json={"status": "contacted"},
@@ -646,8 +642,7 @@ async def test_list_leads_search_matches_name_or_email(
         assert response.status_code == 200
         items = response.json()["items"]
         assert all(
-            "searchable" in item["name"].lower() or "findme" in item["email"]
-            for item in items
+            "searchable" in item["name"].lower() or "findme" in item["email"] for item in items
         )
         assert any(item["email"] == "findme@example.com" for item in items)
 
