@@ -190,9 +190,7 @@ async def test_admin_leads_orders_newest_first_and_includes_coach_slug(
     seeded_leads: list[Lead],
     seeded_coach: Coach,
 ) -> None:
-    response = await client.get(
-        "/admin/leads", headers={"Authorization": f"Bearer {admin_token}"}
-    )
+    response = await client.get("/admin/leads", headers={"Authorization": f"Bearer {admin_token}"})
     assert response.status_code == 200
     payload = response.json()
     assert payload["total"] >= 3
@@ -413,9 +411,7 @@ async def test_update_lead_422_on_unknown_coach(
 
 
 @pytest.mark.integration
-async def test_update_lead_requires_admin(
-    client: AsyncClient, seeded_leads: list[Lead]
-) -> None:
+async def test_update_lead_requires_admin(client: AsyncClient, seeded_leads: list[Lead]) -> None:
     response = await client.patch(
         f"/admin/leads/{seeded_leads[0].id}",
         json={"status": "contacted"},
@@ -548,3 +544,124 @@ async def test_success_story_write_endpoints_require_admin(
     sid = uuid.uuid4()
     assert (await client.patch(f"/admin/success-stories/{sid}", json={})).status_code == 401
     assert (await client.delete(f"/admin/success-stories/{sid}")).status_code == 401
+
+
+# --- Week 7: notes + filtering/search ----------------------------------------
+
+
+@pytest.mark.integration
+async def test_update_lead_persists_notes(
+    client: AsyncClient,
+    jwks_mock: respx.Router,
+    admin_token: str,
+    seeded_leads: list[Lead],
+) -> None:
+    lead = seeded_leads[0]
+    response = await client.patch(
+        f"/admin/leads/{lead.id}",
+        json={"notes": "Called 5/22 — qualified, sending Stripe link"},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["notes"] == "Called 5/22 — qualified, sending Stripe link"
+
+
+@pytest.mark.integration
+async def test_update_lead_can_clear_notes(
+    client: AsyncClient,
+    jwks_mock: respx.Router,
+    admin_token: str,
+    db_session: AsyncSession,
+    seeded_coach: Coach,
+) -> None:
+    lead = Lead(
+        name="With Notes",
+        email="notes@example.com",
+        notes="initial",
+        status=LeadStatus.NEW,
+    )
+    db_session.add(lead)
+    await db_session.commit()
+    await db_session.refresh(lead)
+
+    response = await client.patch(
+        f"/admin/leads/{lead.id}",
+        json={"notes": None},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["notes"] is None
+
+
+@pytest.mark.integration
+async def test_list_leads_filters_by_status(
+    client: AsyncClient,
+    jwks_mock: respx.Router,
+    admin_token: str,
+    db_session: AsyncSession,
+    seeded_leads: list[Lead],
+) -> None:
+    seeded_leads[0].status = LeadStatus.QUALIFIED
+    await db_session.commit()
+
+    response = await client.get(
+        "/admin/leads?status=qualified",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    statuses = {item["status"] for item in payload["items"]}
+    assert statuses == {"qualified"}
+    assert payload["total"] >= 1
+
+
+@pytest.mark.integration
+async def test_list_leads_search_matches_name_or_email(
+    client: AsyncClient,
+    jwks_mock: respx.Router,
+    admin_token: str,
+    db_session: AsyncSession,
+) -> None:
+    db_session.add_all(
+        [
+            Lead(name="Searchable Person", email="findme@example.com", status=LeadStatus.NEW),
+            Lead(name="Other", email="unrelated@example.com", status=LeadStatus.NEW),
+        ]
+    )
+    await db_session.commit()
+
+    by_name = await client.get(
+        "/admin/leads?search=searchable",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    by_email = await client.get(
+        "/admin/leads?search=findme",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    for response in (by_name, by_email):
+        assert response.status_code == 200
+        items = response.json()["items"]
+        assert all(
+            "searchable" in item["name"].lower() or "findme" in item["email"] for item in items
+        )
+        assert any(item["email"] == "findme@example.com" for item in items)
+
+
+@pytest.mark.integration
+async def test_list_leads_filter_total_excludes_filtered_out_rows(
+    client: AsyncClient,
+    jwks_mock: respx.Router,
+    admin_token: str,
+    db_session: AsyncSession,
+    seeded_leads: list[Lead],
+) -> None:
+    # Make exactly one lead `paid`; total must be 1 for that filter.
+    seeded_leads[0].status = LeadStatus.PAID
+    await db_session.commit()
+
+    response = await client.get(
+        "/admin/leads?status=paid",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["total"] == 1

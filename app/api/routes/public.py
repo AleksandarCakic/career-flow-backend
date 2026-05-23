@@ -13,6 +13,7 @@ from app.schemas.lead import (
 )
 from app.services.email_service import EmailService
 from app.services.lead_service import LeadService
+from app.services.posthog_service import PostHogService
 from app.services.slack_service import SlackChannel, SlackService
 
 log = structlog.get_logger(__name__)
@@ -43,6 +44,15 @@ async def submit_contact(payload: ContactCreate, db: DBSession) -> LeadCreateRes
             f"{payload.subject}</strong> and will reply within one business day.</p>"
             f"<p>— The Career Flow team</p>"
         ),
+    )
+    await PostHogService().capture(
+        distinct_id=payload.posthog_distinct_id or str(lead.id),
+        event="lead.created",
+        properties={
+            "lead_id": str(lead.id),
+            "source": "contact",
+            "source_page": payload.source_page,
+        },
     )
 
     return LeadCreateResponse(id=lead.id)
@@ -76,6 +86,11 @@ async def submit_waitlist(payload: WaitlistCreate, db: DBSession) -> LeadCreateR
             "<p>— The Career Flow team</p>"
         ),
     )
+    await PostHogService().capture(
+        distinct_id=payload.posthog_distinct_id or str(entry.id),
+        event="lead.created",
+        properties={"lead_id": str(entry.id), "source": "waitlist"},
+    )
 
     return LeadCreateResponse(id=entry.id)
 
@@ -92,6 +107,15 @@ async def submit_quiz(payload: QuizCreate, db: DBSession) -> LeadCreateResponse:
     await SlackService().post(
         SlackChannel.LEADS,
         text=f"🧭 New quiz response from {payload.email} → matched: {match_label}",
+    )
+    await PostHogService().capture(
+        distinct_id=payload.posthog_distinct_id or str(response.id),
+        event="lead.created",
+        properties={
+            "lead_id": str(response.id),
+            "source": "quiz",
+            "matched_coach": match_label,
+        },
     )
 
     return LeadCreateResponse(id=response.id)
