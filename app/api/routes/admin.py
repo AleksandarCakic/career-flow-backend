@@ -10,7 +10,7 @@ from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
-from sqlalchemy import func, select
+from sqlalchemy import Select, func, or_, select
 from sqlalchemy.engine import Row
 from sqlalchemy.exc import IntegrityError
 
@@ -20,6 +20,7 @@ from app.models import (
     Booking,
     Coach,
     Lead,
+    LeadStatus,
     Package,
     Payment,
     QuizResponse,
@@ -39,6 +40,7 @@ from app.schemas.admin import (
     SuccessStoryUpdate,
     WaitlistAdminRead,
 )
+from app.services.posthog_service import PostHogService
 
 router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[])
 
@@ -51,25 +53,43 @@ async def _count(session: Any, model: Any) -> int:
     return int(result.scalar_one())
 
 
+def _apply_lead_filters(
+    stmt: Select[Any],
+    status_filter: LeadStatus | None,
+    search: str | None,
+) -> Select[Any]:
+    if status_filter is not None:
+        stmt = stmt.where(Lead.status == status_filter)
+    if search:
+        # Parameterized ILIKE — safe against injection; SQLAlchemy escapes the
+        # value. Match against both name and email so a user can type either.
+        pattern = f"%{search}%"
+        stmt = stmt.where(or_(Lead.name.ilike(pattern), Lead.email.ilike(pattern)))
+    return stmt
+
+
 @router.get("/leads", response_model=AdminListResponse[LeadAdminRead])
 async def list_leads(
     session: DBSession,
     _claims: AdminClaims,
     limit: Limit = 50,
     offset: Offset = 0,
+    status_filter: Annotated[LeadStatus | None, Query(alias="status")] = None,
+    search: Annotated[str | None, Query(max_length=200)] = None,
 ) -> AdminListResponse[LeadAdminRead]:
-    stmt = (
-        select(Lead, Coach.slug.label("assigned_coach_slug"))
-        .outerjoin(Coach, Lead.assigned_coach_id == Coach.id)
-        .order_by(Lead.created_at.desc())
-        .offset(offset)
-        .limit(limit)
+    base = select(Lead, Coach.slug.label("assigned_coach_slug")).outerjoin(
+        Coach, Lead.assigned_coach_id == Coach.id
     )
-    rows = (await session.execute(stmt)).all()
-    items = [_lead_row(row) for row in rows]
+    base = _apply_lead_filters(base, status_filter, search)
+    page_stmt = base.order_by(Lead.created_at.desc()).offset(offset).limit(limit)
+    rows = (await session.execute(page_stmt)).all()
+
+    count_stmt = _apply_lead_filters(select(func.count()).select_from(Lead), status_filter, search)
+    total = int((await session.execute(count_stmt)).scalar_one())
+
     return AdminListResponse[LeadAdminRead](
-        items=items,
-        total=await _count(session, Lead),
+        items=[_lead_row(row) for row in rows],
+        total=total,
         limit=limit,
         offset=offset,
     )
@@ -238,6 +258,8 @@ async def update_lead(
     if lead is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found.")
     set_fields = payload.model_fields_set
+    old_status = lead.status
+    old_coach_id = lead.assigned_coach_id
     if "status" in set_fields and payload.status is not None:
         lead.status = payload.status
     if "assigned_coach_id" in set_fields:
@@ -249,8 +271,35 @@ async def update_lead(
                     detail="Coach not found.",
                 )
         lead.assigned_coach_id = payload.assigned_coach_id
+    if "notes" in set_fields:
+        lead.notes = payload.notes
     await session.commit()
     await session.refresh(lead)
+
+    # Analytics: fire after commit so we don't capture events for failed writes.
+    posthog = PostHogService()
+    distinct_id = lead.posthog_distinct_id or str(lead.id)
+    if lead.status != old_status:
+        await posthog.capture(
+            distinct_id=distinct_id,
+            event="lead.status_changed",
+            properties={
+                "lead_id": str(lead.id),
+                "from_status": old_status.value,
+                "to_status": lead.status.value,
+            },
+        )
+    if lead.assigned_coach_id != old_coach_id:
+        await posthog.capture(
+            distinct_id=distinct_id,
+            event="lead.assigned",
+            properties={
+                "lead_id": str(lead.id),
+                "from_coach_id": str(old_coach_id) if old_coach_id else None,
+                "to_coach_id": str(lead.assigned_coach_id) if lead.assigned_coach_id else None,
+            },
+        )
+
     slug: str | None = None
     if lead.assigned_coach_id is not None:
         coach = await session.get(Coach, lead.assigned_coach_id)

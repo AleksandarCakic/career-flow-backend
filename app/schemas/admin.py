@@ -24,13 +24,14 @@ class AdminListResponse[T](BaseModel):
 
 
 class LeadUpdate(BaseModel):
-    """Partial update for a lead. Both fields optional; unset = unchanged."""
+    """Partial update for a lead. All fields optional; unset = unchanged."""
 
     status: LeadStatus | None = None
     assigned_coach_id: UUID | None = Field(default=None)
+    notes: str | None = Field(default=None)
     # Distinguishing "field absent" from "field is null" matters for
-    # assigned_coach_id (null = unassign). Pydantic uses `model_fields_set`
-    # at the route level to disambiguate.
+    # assigned_coach_id (null = unassign) and notes (null = clear).
+    # Pydantic uses `model_fields_set` at the route level to disambiguate.
 
 
 class CoachAdminRead(BaseModel):
@@ -94,6 +95,7 @@ class LeadAdminRead(BaseModel):
     status: LeadStatus
     assigned_coach_id: UUID | None
     assigned_coach_slug: str | None
+    notes: str | None
     created_at: datetime
     updated_at: datetime
 

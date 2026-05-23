@@ -32,3 +32,4 @@ class Lead(TimestampedBase):
         default=LeadStatus.NEW,
         nullable=False,
     )
+    notes: Mapped[str | None] = mapped_column(String)
