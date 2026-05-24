@@ -248,6 +248,98 @@ async def list_success_stories(
 # --- Cross-entity lookups ------------------------------------------------------
 
 
+@router.get("/activity", response_model=list[dict[str, Any]])
+async def list_recent_activity(
+    session: DBSession,
+    _claims: AdminClaims,
+    limit: Annotated[int, Query(ge=1, le=50)] = 10,
+) -> list[dict[str, Any]]:
+    """Most recent N events across all coach-facing entities.
+
+    Returns a unified, chronological feed (newest first) suitable for the
+    admin dashboard. Each entry has `type`, `id`, `created_at`, `email`
+    (when available), and a short `label` describing the row.
+    """
+    from app.models import NewsletterSubscription
+
+    # Pull a handful from each table, then merge + sort + truncate in Python.
+    # Cheaper than UNION ALL with limit semantics and easier to evolve.
+    leads_q = await session.execute(
+        select(Lead.id, Lead.created_at, Lead.email, Lead.name)
+        .order_by(Lead.created_at.desc())
+        .limit(limit)
+    )
+    waitlist_q = await session.execute(
+        select(WaitlistEntry.id, WaitlistEntry.created_at, WaitlistEntry.email)
+        .order_by(WaitlistEntry.created_at.desc())
+        .limit(limit)
+    )
+    quiz_q = await session.execute(
+        select(QuizResponse.id, QuizResponse.created_at, QuizResponse.email)
+        .order_by(QuizResponse.created_at.desc())
+        .limit(limit)
+    )
+    newsletter_q = await session.execute(
+        select(
+            NewsletterSubscription.id,
+            NewsletterSubscription.created_at,
+            NewsletterSubscription.email,
+            NewsletterSubscription.confirmed_at,
+        )
+        .order_by(NewsletterSubscription.created_at.desc())
+        .limit(limit)
+    )
+
+    events: list[dict[str, Any]] = []
+    for lead_id, created, email, name in leads_q:
+        events.append(
+            {
+                "type": "lead",
+                "id": str(lead_id),
+                "created_at": created.isoformat(),
+                "email": email,
+                "label": f"{name} submitted a contact form",
+            }
+        )
+    for entry_id, created, email in waitlist_q:
+        events.append(
+            {
+                "type": "waitlist",
+                "id": str(entry_id),
+                "created_at": created.isoformat(),
+                "email": email,
+                "label": f"{email} joined the waitlist",
+            }
+        )
+    for quiz_id, created, email in quiz_q:
+        events.append(
+            {
+                "type": "quiz",
+                "id": str(quiz_id),
+                "created_at": created.isoformat(),
+                "email": email,
+                "label": f"{email} completed the match quiz",
+            }
+        )
+    for sub_id, created, email, confirmed in newsletter_q:
+        events.append(
+            {
+                "type": "newsletter",
+                "id": str(sub_id),
+                "created_at": created.isoformat(),
+                "email": email,
+                "label": (
+                    f"{email} subscribed to the newsletter"
+                    if confirmed
+                    else f"{email} requested newsletter (unconfirmed)"
+                ),
+            }
+        )
+
+    events.sort(key=lambda e: e["created_at"], reverse=True)
+    return events[:limit]
+
+
 @router.get("/related", response_model=dict[str, int])
 async def list_related_by_email(
     session: DBSession,
