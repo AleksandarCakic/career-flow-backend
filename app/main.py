@@ -1,9 +1,12 @@
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Any
 
 import sentry_sdk
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 
 from app.api.routes import (
@@ -52,9 +55,30 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
+
+# GZip every response > 1KB. Saves on the 30%+ bandwidth penalty for
+# JSON-heavy admin list responses (which can hit 50-200KB with full leads).
+app.add_middleware(GZipMiddleware, minimum_size=1024)
+
+
+@app.middleware("http")
+async def log_request_timing(request: Request, call_next: Any) -> Response:
+    """Structured per-request log: method, path, status, duration_ms."""
+    start = time.perf_counter()
+    response: Response = await call_next(request)
+    duration_ms = round((time.perf_counter() - start) * 1000, 2)
+    log.info(
+        "http.request",
+        method=request.method,
+        path=request.url.path,
+        status=response.status_code,
+        duration_ms=duration_ms,
+    )
+    return response
+
 
 app.include_router(health.router)
 app.include_router(coaches.router)
